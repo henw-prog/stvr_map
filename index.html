@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Problematic STRs - Occupancy Tracker</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      background-color: #1e1e1e;
+      color: white;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    h2 {
+      padding: 10px;
+      text-align: center;
+      background-color: #222;
+      margin: 0;
+      color: #fff;
+    }
+    #map { 
+      height: calc(100vh - 44px); 
+      width: 100%;
+    }
+    /* Filter control dashboard panel layout */
+    .filter-panel {
+      background: white;
+      color: #333;
+      padding: 12px;
+      border-radius: 6px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .filter-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 4px;
+    }
+    .filter-item {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .filter-item input {
+      margin-right: 8px;
+      transform: scale(1.2);
+      cursor: pointer;
+    }
+    /* Dynamic pin markers markers */
+    .map-pin {
+      color: white;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      text-align: center;
+      line-height: 32px;
+      font-weight: bold;
+      border: 2px solid #fff;
+      box-shadow: 0 0 6px rgba(0,0,0,0.6);
+      transition: all 0.2s ease;
+    }
+    .leaflet-popup-content {
+      color: #111 !important;
+      font-size: 13px;
+    }
+    .popup-title {
+      font-size: 14px;
+      font-weight: bold;
+      color: #222;
+      margin-bottom: 4px;
+    }
+    .warning-text {
+      color: #d32f2f;
+      font-weight: bold;
+      background: #ffebee;
+      padding: 4px 6px;
+      border-radius: 4px;
+      margin: 4px 0;
+      display: inline-block;
+    }
+    .airbnb-link {
+      display: block;
+      margin-top: 10px;
+      padding: 6px 12px;
+      background-color: #ff5a5f;
+      color: white !important;
+      text-decoration: none !important;
+      border-radius: 4px;
+      font-weight: bold;
+      text-align: center;
+    }
+    .airbnb-link:hover {
+      background-color: #e0484d;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Chatham County STVR Compliance Map</h2>
+  <div id="map"></div>
+
+  <!-- Include Leaflet Maps Engine Source Bundle -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  
+  <!-- Include local locations array bundle generated from Python -->
+  <script src="data_files/in_process_data/locations.js"></script>
+
+  <script>
+    // Configuration properties
+    const defaultCenter = [32.0485, -81.0087];
+    let mapCenter = defaultCenter;
+
+    if (typeof locations !== 'undefined' && locations.length > 0) {
+      const avgLat = locations.reduce((sum, loc) => sum + Number(loc.latitude), 0) / locations.length;
+      const avgLng = locations.reduce((sum, loc) => sum + Number(loc.longitude), 0) / locations.length;
+      mapCenter = [avgLat, avgLng];
+    }
+
+    const map = L.map('map').setView(mapCenter, 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Keep an array tracking created markers to cleanly filter them on user input actions
+    let markerLayerGroup = L.layerGroup().addTo(map);
+
+    // This renders markers depending on your checklist settings
+    function renderMarkers(filterOnlyViolations) {
+      // Clear all active tracking layouts from the view pane
+      markerLayerGroup.clearLayers();
+
+      locations.forEach(function(loc) {
+        if (!loc.latitude || !loc.longitude) return;
+
+        const totalGuests = parseInt(loc.guests) || 0;
+        const totalBedrooms = parseInt(loc.bedrooms) || 0;
+        
+        // Compliance formulation limit rule calculation logic
+        const baselineLimit = (totalBedrooms * 2) + 2;
+        const maxAllowedGuests = totalBedrooms === 0 ? 2 : baselineLimit;
+        const isOverCapacity = totalGuests > maxAllowedGuests;
+
+        // Drop normal listings out of processing array early if filtering option checkbox checked
+        if (filterOnlyViolations && !isOverCapacity) {
+          return; 
+        }
+
+        // Color coding profile styles: Red for non-compliant properties, Green for stable listings
+        const markerColor = isOverCapacity ? "#d32f2f" : "#388e3c";
+        
+        const pinIcon = L.divIcon({
+          className: 'custom-div-icon',
+          html: `<div class="map-pin" style="background-color: ${markerColor};">${totalGuests}</div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16]
+        });
+
+        // Assemble metrics readout layouts inside balloon popup frame
+        let occupancyWarningHtml = "";
+        if (isOverCapacity) {
+          const excessiveCount = totalGuests - maxAllowedGuests;
+          occupancyWarningHtml = `<div class="warning-text">⚠️ OVER CAPACITY BY ${excessiveCount} GUESTS</div>`;
+        }
+
+        const popupTemplate = `
+          <div class="popup-title">${loc.rental_type || 'Short Term Rental'}</div>
+          <strong>Address:</strong> ${loc.searched_full_address || 'Unknown Address'}<br/>
+          <strong>Host:</strong> ${loc.host_name || 'N/A'}<hr style="margin:6px 0; border:0; border-top:1px solid #ddd;"/>
+          <strong>Advertised Capacity:</strong> ${totalGuests} Guests<br/>
+          <strong>Stated Bedrooms:</strong> ${totalBedrooms}<br/>
+          <strong>Legal Limit:</strong> Max ${maxAllowedGuests} guests
+          ${occupancyWarningHtml}
+          <a class="airbnb-link" href="${loc.url}" target="_blank">View Listing</a>
+        `;
+
+        const newMarker = L.marker([Number(loc.latitude), Number(loc.longitude)], {icon: pinIcon})
+                           .bindPopup(popupTemplate);
+        
+        markerLayerGroup.addLayer(newMarker);
+      });
+    }
+
+    // Initialize with all records displayed
+    renderMarkers(false);
+
+    // Build the interactive floating control panel element widget inside Leaflet
+    const interfaceWidgetControl = L.control({ position: 'topright' });
+
+    interfaceWidgetControl.onAdd = function() {
+      const containerDiv = L.DomUtil.create('div', 'filter-panel');
+      
+      // Stop clicks on filter dashboard leaking tracking movements down through beneath base maps
+      L.DomEvent.disableClickPropagation(containerDiv);
+
+      containerDiv.innerHTML = `
+        <div class="filter-title">Compliance Filters</div>
+        <label class="filter-item">
+          <input type="checkbox" id="complianceCheckbox">
+          Show Violations Only
+        </label>
+      `;
+      return containerDiv;
+    };
+
+    interfaceWidgetControl.addTo(map);
+
+    // Track active change events directly bound to your toggle switch input element
+    document.getElementById('complianceCheckbox').addEventListener('change', function(e) {
+      renderMarkers(e.target.checked);
+    });
+  </script>
+</body>
+</html>
